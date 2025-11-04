@@ -1,8 +1,4 @@
-Here is a **complete and polished README.md** for your project describing YOLOv8 Wild Animal Detection, local storage (SQLite), Firebase sync when online, Cloudinary image upload, and a future React Native dashboard.
 
----
-
-```markdown
 # 🦁 Wild Animal Intrusion Detection System  
 **Real-time YOLOv8 Detection + Local Database Storage + Firebase Sync + Cloudinary Image Backup**
 <p align="center">
@@ -109,6 +105,8 @@ You can later build a **React Native mobile dashboard** to see analytics, animal
 ## 🗂️ Project Structure
 
 ```
+## YOLOv8 model :
+https://drive.google.com/file/d/1QdEC9OQ3OEoBJzVlEU6Szl3Q7LOu8LcJ/view?usp=sharing
 
 wild-animal-detection/
 │
