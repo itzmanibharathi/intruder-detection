@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
 import dotenv from "dotenv";
-import axios from "axios";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -11,15 +11,23 @@ dotenv.config();
 ================================ */
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 if (!MONGO_URI) {
-  console.error("❌ MONGO_URI missing in .env");
+  console.error("❌ MONGO_URI missing in env");
   process.exit(1);
 }
-if (!OPENROUTER_API_KEY) {
-  console.error("❌ OPENROUTER_API_KEY missing in .env");
+if (!GEMINI_API_KEY) {
+  console.error("❌ GEMINI_API_KEY missing in env");
+  process.exit(1);
 }
+
+/* ===============================
+   EXPRESS INIT
+================================ */
+const app = express();
+app.use(cors());
+app.use(express.json());
 
 /* ===============================
    MONGODB INIT
@@ -34,16 +42,14 @@ mongoClient
     console.log("✅ Connected to MongoDB");
   })
   .catch((err) => {
-    console.error("❌ MongoDB connection error:", err);
+    console.error("❌ MongoDB error:", err);
     process.exit(1);
   });
 
 /* ===============================
-   EXPRESS INIT
+   GEMINI INIT
 ================================ */
-const app = express();
-app.use(cors());
-app.use(express.json());
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 /* ===============================
    HEALTH CHECK
@@ -57,43 +63,28 @@ app.get("/", (req, res) => {
 ================================ */
 app.post("/alert", async (req, res) => {
   try {
-    const {
-      animal,
-      confidence,
-      imageUrl,
-      location,
-      latitude,
-      longitude,
-      timestamp,
-    } = req.body;
-
-    if (!animal || !confidence) {
-      return res.status(400).json({ error: "Invalid data" });
-    }
-
-    const alertData = {
-      animal,
-      confidence,
-      imageUrl: imageUrl || null,
-      location: location || null,
-      latitude: latitude || null,
-      longitude: longitude || null,
-      timestamp: timestamp ? new Date(timestamp) : new Date(),
+    const alert = {
+      animal: req.body.animal || "unknown",
+      confidence: req.body.confidence || 0,
+      location: req.body.location || null,
+      latitude: req.body.latitude || null,
+      longitude: req.body.longitude || null,
+      timestamp: new Date(),
     };
 
     const result = await dbMongo
       .collection("animal_alerts")
-      .insertOne(alertData);
+      .insertOne(alert);
 
-    res.json({ message: "Alert saved successfully", id: result.insertedId });
+    res.json({ message: "Alert saved", id: result.insertedId });
   } catch (err) {
-    console.error("❌ Error saving alert:", err);
+    console.error("❌ Save alert error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* ===============================
-   FETCH RECENT ALERTS
+   FETCH ALERTS
 ================================ */
 app.get("/alerts", async (req, res) => {
   try {
@@ -106,137 +97,51 @@ app.get("/alerts", async (req, res) => {
 
     res.json(alerts);
   } catch (err) {
-    console.error("❌ Error fetching alerts:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* ===============================
-   ANALYTICS: TODAY
-================================ */
-app.get("/analytics/today", async (req, res) => {
-  try {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-
-    const count = await dbMongo
-      .collection("animal_alerts")
-      .countDocuments({ timestamp: { $gte: start } });
-
-    res.json({ count });
-  } catch (err) {
-    console.error("❌ Error in today analytics:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* ===============================
-   ANALYTICS: LAST 7 DAYS
-================================ */
-app.get("/analytics/last7days", async (req, res) => {
-  try {
-    const start = new Date();
-    start.setDate(start.getDate() - 7);
-
-    const alerts = await dbMongo
-      .collection("animal_alerts")
-      .find({ timestamp: { $gte: start } })
-      .toArray();
-
-    const result = {};
-    alerts.forEach((alert) => {
-      result[alert.animal] = (result[alert.animal] || 0) + 1;
-    });
-
-    res.json(result);
-  } catch (err) {
-    console.error("❌ Error in last 7 days analytics:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* ===============================
-   ANALYTICS: CUSTOM RANGE
-================================ */
-app.get("/analytics/range", async (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    if (!startDate || !endDate) {
-      return res.status(400).json({ error: "Provide startDate and endDate" });
-    }
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    const count = await dbMongo
-      .collection("animal_alerts")
-      .countDocuments({
-        timestamp: { $gte: start, $lte: end },
-      });
-
-    res.json({ count });
-  } catch (err) {
-    console.error("❌ Error in custom range analytics:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* ===============================
-   FETCH SINGLE ALERT
-================================ */
-app.get("/alert/:id", async (req, res) => {
-  try {
-    const alert = await dbMongo
-      .collection("animal_alerts")
-      .findOne({ _id: new ObjectId(req.params.id) });
-
-    if (!alert) return res.status(404).json({ error: "Alert not found" });
-
-    res.json(alert);
-  } catch (err) {
-    console.error("❌ Error fetching alert:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* ===============================
-   HELPER: DATA SUMMARY
+   HELPER: SUMMARY
 ================================ */
 async function getAnimalSummary() {
-  const alerts = await dbMongo
-    .collection("animal_alerts")
-    .find()
-    .toArray();
+  const alerts = await dbMongo.collection("animal_alerts").find().toArray();
 
-  if (!alerts.length) return "No animal alerts available.";
+  if (!alerts.length) {
+    return "No animal alerts available.";
+  }
 
   const total = alerts.length;
   const animals = {};
   const locations = {};
+  let lastTime = null;
 
   alerts.forEach((a) => {
-    if (a.animal) animals[a.animal] = (animals[a.animal] || 0) + 1;
-    if (a.location)
+    animals[a.animal] = (animals[a.animal] || 0) + 1;
+    if (a.location) {
       locations[a.location] = (locations[a.location] || 0) + 1;
+    }
+    if (!lastTime || a.timestamp > lastTime) {
+      lastTime = a.timestamp;
+    }
   });
 
   return `
-Total alerts: ${total}.
-Animals detected: ${JSON.stringify(animals)}.
-Locations: ${JSON.stringify(locations)}.
+Total alerts: ${total}
+Animals count: ${JSON.stringify(animals)}
+Locations: ${JSON.stringify(locations)}
+Last alert time: ${lastTime ? lastTime.toISOString() : "Not available"}
 `;
 }
 
 /* ===============================
-   CHAT API (OPENROUTER – META FREE)
+   CHAT API (GEMINI FREE)
 ================================ */
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 app.post("/api/chat", async (req, res) => {
   const { message } = req.body;
-  if (!message) return res.status(400).json({ reply: "Message required" });
+  if (!message) {
+    return res.status(400).json({ reply: "Message required" });
+  }
 
   try {
     const summary = await getAnimalSummary();
@@ -244,30 +149,34 @@ app.post("/api/chat", async (req, res) => {
     const prompt = `
 You are an AI assistant for an animal intrusion detection system.
 
-Rules:
-- Auto-detect user language
-- Reply in SAME language
-- Correct grammar silently
-- Short, clear answers only
+RULES:
+- Detect the user's language automatically
+- Reply ONLY in the same language
+- Fix grammar silently
+- Keep replies SHORT and DIRECT
 - Answer ONLY what is asked
-- If data missing say "Not available"
+- If data not available, say "Not available"
 
-DATA:
+SYSTEM DATA:
 ${summary}
 
 USER QUESTION:
 ${message}
 `;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash-latest",
+    });
 
     const result = await model.generateContent(prompt);
-    const reply = result.response.text();
+    const reply = result.response.text().trim();
 
     res.json({ reply });
   } catch (err) {
-    console.error("❌ Gemini error:", err.message);
-    res.json({ reply: "AI service temporarily unavailable. Please try again." });
+    console.error("❌ Gemini error:", err);
+    res.json({
+      reply: "AI service temporarily unavailable. Please try again.",
+    });
   }
 });
 
