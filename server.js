@@ -170,71 +170,96 @@ app.get("/alert/:id", async (req, res) => {
 // ===============================
 // CHAT ENDPOINT WITH OPENROUTER
 // ===============================
-app.post('/api/chat', async (req, res) => {
-  const { message, language } = req.body;
-
-  if (!message || !language) {
-    return res.status(400).json({ error: "Message and language are required" });
-  }
-
+app.post("/api/chat", async (req, res) => {
   try {
-    // 1. Fetch all alerts from DB
-    const alerts = await dbMongo.collection("animal_alerts")
+    const { message, language } = req.body;
+
+    if (!message) {
+      return res.json({ reply: "Please ask a question." });
+    }
+
+    // ===== Fetch alerts =====
+    const alerts = await dbMongo
+      .collection("animal_alerts")
       .find()
       .sort({ timestamp: -1 })
       .toArray();
 
-    const totalAlerts = alerts.length;
-    const animalCounts = {};
-    const locationCounts = {};
-    let lastTimestamp = null;
+    const total = alerts.length;
 
-    alerts.forEach(alert => {
-      const label = alert.animal || "Unknown";
-      animalCounts[label] = (animalCounts[label] || 0) + 1;
-      if (alert.location) locationCounts[alert.location] = (locationCounts[alert.location] || 0) + 1;
-      if (!lastTimestamp || alert.timestamp > lastTimestamp) lastTimestamp = alert.timestamp;
+    let lastTime = null;
+    const animalCount = {};
+    const locationCount = {};
+
+    alerts.forEach(a => {
+      const animal = a.animal || "Unknown";
+      animalCount[animal] = (animalCount[animal] || 0) + 1;
+
+      if (a.location) {
+        locationCount[a.location] = (locationCount[a.location] || 0) + 1;
+      }
+
+      if (!lastTime || a.timestamp > lastTime) lastTime = a.timestamp;
     });
 
-    const mostFrequentAnimal = Object.entries(animalCounts).reduce((a, b) => a[1] > b[1] ? a : b, ["Unknown", 0])[0];
-    const mostFrequentLocation = Object.entries(locationCounts).reduce((a, b) => a[1] > b[1] ? a : b, ["Not specified", 0])[0];
-    const lastAlert = lastTimestamp ? `Last alert: ${Math.floor((Date.now() - new Date(lastTimestamp))/60000)} minutes ago.` : "No alerts yet.";
+    const mostAnimal =
+      Object.entries(animalCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "Unknown";
 
-    // 2. Prepare strong system prompt
+    const mostLocation =
+      Object.entries(locationCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "Not specified";
+
+    const lastAlert =
+      lastTime ? `${Math.floor((Date.now() - new Date(lastTime)) / 60000)} minutes ago` : "No alerts";
+
+    // ===== SYSTEM PROMPT =====
     const systemPrompt = `
-You are an AI assistant for the Animal Patrol app.
-User queries might be vague or have grammatical errors.
-Auto-correct the user input internally.
-Reply in ${language} only.
-Provide accurate, concise answers based on this data:
-- Total alerts: ${totalAlerts}
-- Most frequent animal: ${mostFrequentAnimal}
-- Most frequent location: ${mostFrequentLocation}
-- Last alert: ${lastAlert}
-- Locations of alerts: ${Object.keys(locationCounts).join(", ") || "Not specified"}
-Focus on user question, provide direct answers, do not repeat generic tips.
+You are an AI assistant for an animal intrusion monitoring system.
+
+Tasks:
+1. Detect the user's input language automatically.
+2. Fix spelling and grammar internally.
+3. Understand weak or broken questions.
+4. Answer ONLY what is asked.
+5. Do NOT repeat previous answers.
+6. Keep replies short and factual.
+7. Translate the FINAL answer to this language: ${language}
+
+System data:
+- Total alerts: ${total}
+- Most detected animal: ${mostAnimal}
+- Most common location: ${mostLocation}
+- Last alert time: ${lastAlert}
 `;
 
-    // 3. Ask the AI
-    const completion = await openai.chat.completions.create({
-      model: "meta-instruct-0b", // fast free tier
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: message }
-      ],
-      temperature: 0.3, // low temp for accurate answers
-      max_tokens: 300,
-    });
+    const response = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        model: "meta-llama/llama-3.1-8b-instruct:free",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: message }
+        ],
+        temperature: 0.6,
+        max_tokens: 180
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
 
-    const reply = completion.choices[0].message.content;
-
+    const reply = response.data.choices[0].message.content.trim();
     res.json({ reply });
+
   } catch (err) {
-    console.error("❌ Error in /api/chat:", err);
-    res.status(500).json({ error: "AI response failed" });
+    console.error("❌ AI ERROR:", err.response?.data || err.message);
+    res.json({
+      reply: "AI service temporarily unavailable. Please try again."
+    });
   }
 });
-
 
 // ===============================
 // START SERVER
