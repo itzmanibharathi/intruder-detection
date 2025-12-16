@@ -240,15 +240,17 @@ app.post("/api/chat", async (req, res) => {
     const summary = await getAnimalSummary();
 
     const systemPrompt = `
-You are an AI assistant for an animal intrusion detection app.
+You are an AI assistant for an animal intrusion detection system.
 
-INSTRUCTIONS:
-- Automatically detect the user's language and reply in the SAME language.
-- Fix grammar silently.
+Rules:
+- Detect the user's language automatically.
+- Reply in the same language.
+- Correct grammar silently.
 - Answer only what the user asks.
-- Keep responses short and clear.
-- If data is missing, say "Not available".
-- Use ONLY this data when answering:
+- Keep answers short and factual.
+- If information is missing, say "Not available".
+
+Data:
 ${summary}
 `;
 
@@ -266,6 +268,8 @@ ${summary}
         headers: {
           Authorization: `Bearer ${OPENROUTER_API_KEY}`,
           "Content-Type": "application/json",
+          "HTTP-Referer": "https://intruder-detection.onrender.com",
+          "X-Title": "Intruder Detection App",
         },
       }
     );
@@ -276,13 +280,10 @@ ${summary}
 
     res.json({ reply });
   } catch (err) {
-    console.error(
-      "❌ OpenRouter error:",
-      err.response?.data || err.message
-    );
-    res
-      .status(500)
-      .json({ reply: "AI service temporarily unavailable. Please try again." });
+    console.error("❌ OpenRouter error:", err.response?.data || err.message);
+    res.status(500).json({
+      reply: "AI service temporarily unavailable. Please try again.",
+    });
   }
 });
 
