@@ -127,15 +127,11 @@ Animals: ${JSON.stringify(animals)}
 Locations: ${JSON.stringify(locations)}
 `;
 }
-
 /* ===============================
-   CHAT API (WORKING GEMINI)
+   CHAT API (HUGGING FACE – FREE)
 ================================ */
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
 app.post("/api/chat", async (req, res) => {
   const { message } = req.body;
-
   if (!message) {
     return res.json({ reply: "Message required" });
   }
@@ -144,36 +140,51 @@ app.post("/api/chat", async (req, res) => {
     const summary = await getAnimalSummary();
 
     const prompt = `
-You are an AI assistant for animal intrusion monitoring.
+You are an AI assistant for an animal intrusion detection system.
 
 Rules:
 - Detect user language automatically
-- Reply in same language
-- Fix grammar silently
+- Reply in the SAME language
+- Correct grammar silently
+- Short, clear answers only
 - Answer ONLY what is asked
-- Be short & accurate
-- If data missing say "Not available"
+- If information is missing, say "Not available"
 
 DATA:
 ${summary}
 
-QUESTION:
+USER QUESTION:
 ${message}
 `;
 
-    // ✅ ONLY THIS MODEL WORKS FREE
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.0-pro",
-    });
+    const response = await axios.post(
+      "https://api-inference.huggingface.co/models/meta-llama/Llama-3.1-8B-Instruct",
+      {
+        inputs: prompt,
+        parameters: {
+          max_new_tokens: 120,
+          temperature: 0.5,
+          return_full_text: false
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.HF_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 60000
+      }
+    );
 
-    const result = await model.generateContent(prompt);
-    const reply = result.response.text().trim();
+    const reply =
+      response.data?.[0]?.generated_text?.trim() ||
+      "Not available";
 
     res.json({ reply });
   } catch (err) {
-    console.error("❌ Gemini error:", err.message);
+    console.error("❌ HuggingFace error:", err.response?.data || err.message);
     res.json({
-      reply: "AI service temporarily unavailable. Please try again.",
+      reply: "AI service temporarily unavailable. Please try again."
     });
   }
 });
