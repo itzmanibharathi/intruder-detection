@@ -178,22 +178,23 @@ app.post("/api/chat", async (req, res) => {
     const prompt = `
 Reply ONLY in ${language}.
 Keep it short and simple.
-Based on: ${summary}.
+Based on this summary: ${summary}.
 Give forest safety and animal intrusion prevention tips.
 `;
 
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
-        model: "mpt-7b-chat",
-        messages: [{ role: "user", content: prompt }]
+        model: "openrouter/auto", // automatically selects a free model
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 300
       },
       {
         headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           "Content-Type": "application/json"
         },
-        timeout: 30000
+        timeout: 60000
       }
     );
 
@@ -202,9 +203,9 @@ Give forest safety and animal intrusion prevention tips.
 
   } catch (err) {
     console.error("❌ OpenRouter error:", err.response?.data || err.message);
-    // Fallback for free/demo
+    // Fallback for free/demo usage
     res.json({
-      reply: "AI temporarily unavailable. Ensure fencing, lights, and regular patrols."
+      reply: `Demo AI response: ${await getAnimalSummary()}. Ensure fencing, lights, and patrols.`
     });
   }
 });
