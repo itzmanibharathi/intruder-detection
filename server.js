@@ -174,7 +174,47 @@ app.get("/alert/:id", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// Assume existing fetchAlerts function or DB query
+async function getAnimalSummary() {
+  const alerts = await fetchAlerts(); // Your existing function
+  const totalAlerts = alerts.length;
+  const animalCounts = {};
+  alerts.forEach(alert => {
+    animalCounts[alert.label] = (animalCounts[alert.label] || 0) + 1;
+  });
+  const mostFrequent = Object.entries(animalCounts).reduce((a, b) => a[1] > b[1] ? a : b, ['', 0])[0];
+  return `Animal detections: ${totalAlerts} alerts. Most frequent: ${mostFrequent}. Focus on forest prevention tips like fencing, monitoring zones.`;
+}
 
+app.post('/api/chat', async (req, res) => {
+  const { message, language } = req.body; // language e.g., 'Tamil'
+  const summary = await getAnimalSummary();
+
+  const systemPrompt = `You are an AI assistant for AnimalPatrol app. Reply in ${language} only. Keep replies short, simple, easy to understand. Base answers on this data: ${summary}. Focus on summaries of animal detections and forest prevention from animals (e.g., tips to avoid intrusions).`;
+
+  try {
+    const response = await axios.post('https://api.x.ai/v1/chat/completions', {
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: message }
+      ],
+      model: 'grok-4',
+      stream: false,
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 3600000 // 1 hour
+    });
+
+    const reply = response.data.choices[0].message.content;
+    res.json({ reply });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to get AI response' });
+  }
+});
 // ===============================
 // START SERVER
 // ===============================
