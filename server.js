@@ -230,60 +230,44 @@ Locations: ${JSON.stringify(locations)}.
 /* ===============================
    CHAT API (OPENROUTER – META FREE)
 ================================ */
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 app.post("/api/chat", async (req, res) => {
   const { message } = req.body;
-  if (!message) {
-    return res.status(400).json({ error: "Message is required" });
-  }
+  if (!message) return res.status(400).json({ reply: "Message required" });
 
   try {
     const summary = await getAnimalSummary();
 
-    const systemPrompt = `
+    const prompt = `
 You are an AI assistant for an animal intrusion detection system.
 
 Rules:
-- Detect the user's language automatically.
-- Reply in the same language.
-- Correct grammar silently.
-- Answer only what the user asks.
-- Keep answers short and factual.
-- If information is missing, say "Not available".
+- Auto-detect user language
+- Reply in SAME language
+- Correct grammar silently
+- Short, clear answers only
+- Answer ONLY what is asked
+- If data missing say "Not available"
 
-Data:
+DATA:
 ${summary}
+
+USER QUESTION:
+${message}
 `;
 
-    const response = await axios.post(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        model: "meta-llama/llama-3.1-8b-instruct:free",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message },
-        ],
-        temperature: 0.6,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://intruder-detection.onrender.com",
-          "X-Title": "Intruder Detection App",
-        },
-      }
-    );
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const reply =
-      response.data?.choices?.[0]?.message?.content ||
-      "No response available";
+    const result = await model.generateContent(prompt);
+    const reply = result.response.text();
 
     res.json({ reply });
   } catch (err) {
-    console.error("❌ OpenRouter error:", err.response?.data || err.message);
-    res.status(500).json({
-      reply: "AI service temporarily unavailable. Please try again.",
-    });
+    console.error("❌ Gemini error:", err.message);
+    res.json({ reply: "AI service temporarily unavailable. Please try again." });
   }
 });
 
