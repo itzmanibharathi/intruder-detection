@@ -11,9 +11,10 @@ dotenv.config();
 // ===============================
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-if (!MONGO_URI) {
-  console.error("❌ MONGO_URI missing in .env");
+if (!MONGO_URI || !OPENROUTER_API_KEY) {
+  console.error("❌ MONGO_URI or OPENROUTER_API_KEY missing in env");
   process.exit(1);
 }
 
@@ -25,7 +26,7 @@ let dbMongo;
 
 mongoClient.connect()
   .then(() => {
-    dbMongo = mongoClient.db(); // default DB from URI
+    dbMongo = mongoClient.db();
     console.log("✅ Connected to MongoDB");
   })
   .catch(err => {
@@ -43,28 +44,16 @@ app.use(express.json());
 // ===============================
 // HEALTH CHECK
 // ===============================
-app.get("/", (req, res) => {
-  res.json({ status: "Backend running ✅" });
-});
+app.get("/", (req, res) => res.json({ status: "Backend running ✅" }));
 
 // ===============================
 // SAVE ALERT
 // ===============================
 app.post("/alert", async (req, res) => {
   try {
-    const {
-      animal,
-      confidence,
-      imageUrl,
-      location,
-      latitude,
-      longitude,
-      timestamp
-    } = req.body;
+    const { animal, confidence, imageUrl, location, latitude, longitude, timestamp } = req.body;
 
-    if (!animal || !confidence) {
-      return res.status(400).json({ error: "Invalid data" });
-    }
+    if (!animal || !confidence) return res.status(400).json({ error: "Invalid data" });
 
     const alertData = {
       animal,
@@ -76,53 +65,27 @@ app.post("/alert", async (req, res) => {
       timestamp: timestamp ? new Date(timestamp) : new Date(),
     };
 
-    const result = await dbMongo
-      .collection("animal_alerts")
-      .insertOne(alertData);
-
-    console.log("✅ Alert saved:", result.insertedId);
+    const result = await dbMongo.collection("animal_alerts").insertOne(alertData);
     res.json({ message: "Alert saved successfully", id: result.insertedId });
-
   } catch (err) {
-    console.error("❌ Error saving alert:", err);
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ===============================
-// FETCH RECENT ALERTS
+// FETCH ALERTS
 // ===============================
 app.get("/alerts", async (req, res) => {
   try {
-    const alerts = await dbMongo
-      .collection("animal_alerts")
+    const alerts = await dbMongo.collection("animal_alerts")
       .find()
       .sort({ timestamp: -1 })
       .limit(20)
       .toArray();
-
     res.json(alerts);
   } catch (err) {
-    console.error("❌ Error fetching alerts:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ===============================
-// ANALYTICS: Today
-// ===============================
-app.get("/analytics/today", async (req, res) => {
-  try {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-
-    const count = await dbMongo
-      .collection("animal_alerts")
-      .countDocuments({ timestamp: { $gte: start } });
-
-    res.json({ count });
-  } catch (err) {
-    console.error("❌ Analytics error:", err);
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -131,69 +94,55 @@ app.get("/analytics/today", async (req, res) => {
 // SUMMARY FUNCTION
 // ===============================
 async function getAnimalSummary() {
-  const alerts = await dbMongo
-    .collection("animal_alerts")
-    .find()
-    .toArray();
-
+  const alerts = await dbMongo.collection("animal_alerts").find().toArray();
   const totalAlerts = alerts.length;
   const animalCounts = {};
-
   alerts.forEach(alert => {
     animalCounts[alert.animal] = (animalCounts[alert.animal] || 0) + 1;
   });
-
-  const mostFrequent =
-    Object.entries(animalCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "None";
-
+  const mostFrequent = Object.entries(animalCounts).sort((a,b)=>b[1]-a[1])[0]?.[0] || "None";
   return `Animal detections: ${totalAlerts}. Most frequent: ${mostFrequent}.`;
 }
 
 // ===============================
-// CHAT (GROK API)
+// CHAT USING OPENROUTER
 // ===============================
 app.post("/api/chat", async (req, res) => {
   try {
     const { message, language } = req.body;
-    console.log("📩 Chat request:", message, language);
-
     const summary = await getAnimalSummary();
 
-    const systemPrompt = `
-You are an AI assistant for AnimalPatrol.
+    const prompt = `
 Reply ONLY in ${language}.
-Keep replies short and simple.
-Base answers on this data: ${summary}.
+Keep it short and simple.
+Based on: ${summary}.
 Give forest safety and animal intrusion prevention tips.
 `;
 
     const response = await axios.post(
-      "https://api.x.ai/v1/chat/completions",
+      "https://openrouter.ai/api/v1/chat/completions",
       {
-        model: "grok-4",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message }
-        ],
-        stream: false,
+        model: "mpt-7b-chat", // free model from OpenRouter
+        messages: [{ role: "user", content: prompt }]
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json"
         },
-        timeout: 60000,
+        timeout: 30000
       }
     );
 
     const reply = response.data.choices[0].message.content;
-    console.log("✅ Grok reply sent");
-
     res.json({ reply });
 
-  } catch (error) {
-    console.error("❌ Grok API error:", error.response?.data || error.message);
-    res.status(500).json({ error: "Failed to get AI response" });
+  } catch (err) {
+    console.error("❌ OpenRouter error:", err.response?.data || err.message);
+    // fallback for free usage / demo
+    res.json({
+      reply: "AI temporarily unavailable. Ensure fencing, lights, and regular patrols."
+    });
   }
 });
 
