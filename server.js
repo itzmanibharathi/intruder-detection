@@ -6,50 +6,44 @@ import axios from "axios";
 
 dotenv.config();
 
+// ===============================
+// CONFIG
+// ===============================
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-if (!MONGO_URI || !OPENROUTER_API_KEY) {
-  console.error("❌ MONGO_URI or OPENROUTER_API_KEY missing in env");
-  process.exit(1);
-}
+if (!MONGO_URI) throw new Error("MONGO_URI missing in .env");
+if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY missing in .env");
 
 // ===============================
-// MongoDB Init
+// MONGODB INIT
 // ===============================
 const mongoClient = new MongoClient(MONGO_URI);
 let dbMongo;
 
-mongoClient.connect()
-  .then(() => {
-    dbMongo = mongoClient.db();
-    console.log("✅ Connected to MongoDB");
-  })
-  .catch(err => {
-    console.error("❌ MongoDB connection error:", err);
-    process.exit(1);
-  });
+await mongoClient.connect();
+dbMongo = mongoClient.db();
+console.log("✅ Connected to MongoDB");
 
 // ===============================
-// Express Init
+// EXPRESS INIT
 // ===============================
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // ===============================
-// Health Check
+// HEALTH CHECK
 // ===============================
 app.get("/", (req, res) => res.json({ status: "Backend running ✅" }));
 
 // ===============================
-// Save Alert
+// SAVE ALERT
 // ===============================
 app.post("/alert", async (req, res) => {
   try {
     const { animal, confidence, imageUrl, location, latitude, longitude, timestamp } = req.body;
-
     if (!animal || !confidence) return res.status(400).json({ error: "Invalid data" });
 
     const alertData = {
@@ -63,15 +57,17 @@ app.post("/alert", async (req, res) => {
     };
 
     const result = await dbMongo.collection("animal_alerts").insertOne(alertData);
+    console.log("✅ Alert saved:", result.insertedId);
+
     res.json({ message: "Alert saved successfully", id: result.insertedId });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error saving alert:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ===============================
-// Fetch Recent Alerts
+// FETCH RECENT ALERTS
 // ===============================
 app.get("/alerts", async (req, res) => {
   try {
@@ -80,47 +76,61 @@ app.get("/alerts", async (req, res) => {
       .sort({ timestamp: -1 })
       .limit(20)
       .toArray();
+    console.log(`✅ Fetched ${alerts.length} alerts`);
     res.json(alerts);
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error fetching alerts:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ===============================
-// Analytics
+// ANALYTICS: Today
 // ===============================
 app.get("/analytics/today", async (req, res) => {
   try {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
 
-    const count = await dbMongo.collection("animal_alerts").countDocuments({ timestamp: { $gte: start } });
+    const count = await dbMongo.collection("animal_alerts")
+      .countDocuments({ timestamp: { $gte: start } });
+
+    console.log(`📊 Today analytics: ${count} alerts`);
     res.json({ count });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error in today analytics:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// ===============================
+// ANALYTICS: Last 7 Days
+// ===============================
 app.get("/analytics/last7days", async (req, res) => {
   try {
     const start = new Date();
     start.setDate(start.getDate() - 7);
 
-    const alerts = await dbMongo.collection("animal_alerts").find({ timestamp: { $gte: start } }).toArray();
+    const alerts = await dbMongo.collection("animal_alerts")
+      .find({ timestamp: { $gte: start } })
+      .toArray();
+
     const result = {};
     alerts.forEach(alert => {
       result[alert.animal] = (result[alert.animal] || 0) + 1;
     });
 
+    console.log("📊 Last 7 days analytics:", result);
     res.json(result);
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error in last 7 days analytics:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// ===============================
+// ANALYTICS: Custom Range
+// ===============================
 app.get("/analytics/range", async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -129,16 +139,19 @@ app.get("/analytics/range", async (req, res) => {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    const count = await dbMongo.collection("animal_alerts").countDocuments({ timestamp: { $gte: start, $lte: end } });
+    const count = await dbMongo.collection("animal_alerts")
+      .countDocuments({ timestamp: { $gte: start, $lte: end } });
+
+    console.log(`📊 Custom range analytics: ${count} alerts between ${startDate} and ${endDate}`);
     res.json({ count });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error in custom range analytics:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ===============================
-// Fetch Single Alert
+// FETCH SINGLE ALERT
 // ===============================
 app.get("/alert/:id", async (req, res) => {
   try {
@@ -146,71 +159,70 @@ app.get("/alert/:id", async (req, res) => {
     const alert = await dbMongo.collection("animal_alerts").findOne({ _id: new ObjectId(id) });
 
     if (!alert) return res.status(404).json({ error: "Alert not found" });
+
     res.json(alert);
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error fetching alert:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ===============================
-// Summary function
-// ===============================
-async function getAnimalSummary() {
-  const alerts = await dbMongo.collection("animal_alerts").find().toArray();
-  const totalAlerts = alerts.length;
-  const animalCounts = {};
-  alerts.forEach(alert => {
-    animalCounts[alert.animal] = (animalCounts[alert.animal] || 0) + 1;
-  });
-  const mostFrequent = Object.entries(animalCounts).sort((a,b)=>b[1]-a[1])[0]?.[0] || "None";
-  return `Animal detections: ${totalAlerts}. Most frequent: ${mostFrequent}.`;
-}
-
-// ===============================
-// Chat with OpenRouter
+// CHAT ENDPOINT WITH OPENROUTER
 // ===============================
 app.post("/api/chat", async (req, res) => {
   try {
     const { message, language } = req.body;
-    const summary = await getAnimalSummary();
+    if (!message || !language) return res.status(400).json({ error: "Provide message and language" });
 
+    // Fetch recent alerts for summary
+    const alerts = await dbMongo.collection("animal_alerts")
+      .find()
+      .sort({ timestamp: -1 })
+      .limit(20)
+      .toArray();
+
+    let summary = "No recent animal alerts.";
+    if (alerts.length > 0) {
+      const counts = {};
+      alerts.forEach(a => (counts[a.animal] = (counts[a.animal] || 0) + 1));
+      const mostFrequent = Object.entries(counts).reduce((a,b)=>a[1]>b[1]?a:b)[0];
+      summary = `Total alerts: ${alerts.length}. Most frequent: ${mostFrequent}.`;
+    }
+
+    // OpenRouter prompt
     const prompt = `
+You are an AI assistant for a forest patrol app.
 Reply ONLY in ${language}.
-Keep it short and simple.
-Based on this summary: ${summary}.
-Give forest safety and animal intrusion prevention tips.
+User question: ${message}
+Data summary: ${summary}
+Keep answers short, simple, and relevant.
+Do NOT give generic safety tips automatically. Respond to the user question based on alerts.
 `;
 
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
-        model: "openrouter/auto", // automatically selects a free model
+        model: "openrouter/auto",
         messages: [{ role: "user", content: prompt }],
         max_tokens: 300
       },
       {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
-        },
+        headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
         timeout: 60000
       }
     );
 
-    const reply = response.data.choices[0].message.content;
+    const reply = response.data.choices?.[0]?.message?.content || "AI response unavailable";
     res.json({ reply });
 
   } catch (err) {
-    console.error("❌ OpenRouter error:", err.response?.data || err.message);
-    // Fallback for free/demo usage
-    res.json({
-      reply: `Demo AI response: ${await getAnimalSummary()}. Ensure fencing, lights, and patrols.`
-    });
+    console.error("❌ Chat error:", err.response?.data || err.message);
+    res.json({ reply: "AI temporarily unavailable. Try again later." });
   }
 });
 
 // ===============================
-// Start Server
+// START SERVER
 // ===============================
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT} ✅`));
