@@ -6,45 +6,70 @@ import axios from "axios";
 
 dotenv.config();
 
-// ===============================
-// CONFIG
-// ===============================
+/* ===============================
+   CONFIG
+================================ */
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-if (!MONGO_URI) throw new Error("MONGO_URI missing in .env");
-if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY missing in .env");
+if (!MONGO_URI) {
+  console.error("❌ MONGO_URI missing in .env");
+  process.exit(1);
+}
+if (!OPENROUTER_API_KEY) {
+  console.error("❌ OPENROUTER_API_KEY missing in .env");
+}
 
-// ===============================
-// MONGODB INIT
-// ===============================
+/* ===============================
+   MONGODB INIT
+================================ */
 const mongoClient = new MongoClient(MONGO_URI);
 let dbMongo;
 
-await mongoClient.connect();
-dbMongo = mongoClient.db();
-console.log("✅ Connected to MongoDB");
+mongoClient
+  .connect()
+  .then(() => {
+    dbMongo = mongoClient.db();
+    console.log("✅ Connected to MongoDB");
+  })
+  .catch((err) => {
+    console.error("❌ MongoDB connection error:", err);
+    process.exit(1);
+  });
 
-// ===============================
-// EXPRESS INIT
-// ===============================
+/* ===============================
+   EXPRESS INIT
+================================ */
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===============================
-// HEALTH CHECK
-// ===============================
-app.get("/", (req, res) => res.json({ status: "Backend running ✅" }));
+/* ===============================
+   HEALTH CHECK
+================================ */
+app.get("/", (req, res) => {
+  res.json({ status: "Backend running ✅" });
+});
 
-// ===============================
-// SAVE ALERT
-// ===============================
+/* ===============================
+   SAVE ALERT
+================================ */
 app.post("/alert", async (req, res) => {
   try {
-    const { animal, confidence, imageUrl, location, latitude, longitude, timestamp } = req.body;
-    if (!animal || !confidence) return res.status(400).json({ error: "Invalid data" });
+    const {
+      animal,
+      confidence,
+      imageUrl,
+      location,
+      latitude,
+      longitude,
+      timestamp,
+    } = req.body;
+
+    if (!animal || !confidence) {
+      return res.status(400).json({ error: "Invalid data" });
+    }
 
     const alertData = {
       animal,
@@ -56,8 +81,9 @@ app.post("/alert", async (req, res) => {
       timestamp: timestamp ? new Date(timestamp) : new Date(),
     };
 
-    const result = await dbMongo.collection("animal_alerts").insertOne(alertData);
-    console.log("✅ Alert saved:", result.insertedId);
+    const result = await dbMongo
+      .collection("animal_alerts")
+      .insertOne(alertData);
 
     res.json({ message: "Alert saved successfully", id: result.insertedId });
   } catch (err) {
@@ -66,17 +92,18 @@ app.post("/alert", async (req, res) => {
   }
 });
 
-// ===============================
-// FETCH RECENT ALERTS
-// ===============================
+/* ===============================
+   FETCH RECENT ALERTS
+================================ */
 app.get("/alerts", async (req, res) => {
   try {
-    const alerts = await dbMongo.collection("animal_alerts")
+    const alerts = await dbMongo
+      .collection("animal_alerts")
       .find()
       .sort({ timestamp: -1 })
       .limit(20)
       .toArray();
-    console.log(`✅ Fetched ${alerts.length} alerts`);
+
     res.json(alerts);
   } catch (err) {
     console.error("❌ Error fetching alerts:", err);
@@ -84,18 +111,18 @@ app.get("/alerts", async (req, res) => {
   }
 });
 
-// ===============================
-// ANALYTICS: Today
-// ===============================
+/* ===============================
+   ANALYTICS: TODAY
+================================ */
 app.get("/analytics/today", async (req, res) => {
   try {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
 
-    const count = await dbMongo.collection("animal_alerts")
+    const count = await dbMongo
+      .collection("animal_alerts")
       .countDocuments({ timestamp: { $gte: start } });
 
-    console.log(`📊 Today analytics: ${count} alerts`);
     res.json({ count });
   } catch (err) {
     console.error("❌ Error in today analytics:", err);
@@ -103,24 +130,24 @@ app.get("/analytics/today", async (req, res) => {
   }
 });
 
-// ===============================
-// ANALYTICS: Last 7 Days
-// ===============================
+/* ===============================
+   ANALYTICS: LAST 7 DAYS
+================================ */
 app.get("/analytics/last7days", async (req, res) => {
   try {
     const start = new Date();
     start.setDate(start.getDate() - 7);
 
-    const alerts = await dbMongo.collection("animal_alerts")
+    const alerts = await dbMongo
+      .collection("animal_alerts")
       .find({ timestamp: { $gte: start } })
       .toArray();
 
     const result = {};
-    alerts.forEach(alert => {
+    alerts.forEach((alert) => {
       result[alert.animal] = (result[alert.animal] || 0) + 1;
     });
 
-    console.log("📊 Last 7 days analytics:", result);
     res.json(result);
   } catch (err) {
     console.error("❌ Error in last 7 days analytics:", err);
@@ -128,21 +155,25 @@ app.get("/analytics/last7days", async (req, res) => {
   }
 });
 
-// ===============================
-// ANALYTICS: Custom Range
-// ===============================
+/* ===============================
+   ANALYTICS: CUSTOM RANGE
+================================ */
 app.get("/analytics/range", async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    if (!startDate || !endDate) return res.status(400).json({ error: "Provide startDate and endDate" });
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: "Provide startDate and endDate" });
+    }
 
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    const count = await dbMongo.collection("animal_alerts")
-      .countDocuments({ timestamp: { $gte: start, $lte: end } });
+    const count = await dbMongo
+      .collection("animal_alerts")
+      .countDocuments({
+        timestamp: { $gte: start, $lte: end },
+      });
 
-    console.log(`📊 Custom range analytics: ${count} alerts between ${startDate} and ${endDate}`);
     res.json({ count });
   } catch (err) {
     console.error("❌ Error in custom range analytics:", err);
@@ -150,13 +181,14 @@ app.get("/analytics/range", async (req, res) => {
   }
 });
 
-// ===============================
-// FETCH SINGLE ALERT
-// ===============================
+/* ===============================
+   FETCH SINGLE ALERT
+================================ */
 app.get("/alert/:id", async (req, res) => {
   try {
-    const id = req.params.id;
-    const alert = await dbMongo.collection("animal_alerts").findOne({ _id: new ObjectId(id) });
+    const alert = await dbMongo
+      .collection("animal_alerts")
+      .findOne({ _id: new ObjectId(req.params.id) });
 
     if (!alert) return res.status(404).json({ error: "Alert not found" });
 
@@ -167,68 +199,57 @@ app.get("/alert/:id", async (req, res) => {
   }
 });
 
-// ===============================
-// CHAT ENDPOINT WITH OPENROUTER
-// ===============================
+/* ===============================
+   HELPER: DATA SUMMARY
+================================ */
+async function getAnimalSummary() {
+  const alerts = await dbMongo
+    .collection("animal_alerts")
+    .find()
+    .toArray();
+
+  if (!alerts.length) return "No animal alerts available.";
+
+  const total = alerts.length;
+  const animals = {};
+  const locations = {};
+
+  alerts.forEach((a) => {
+    if (a.animal) animals[a.animal] = (animals[a.animal] || 0) + 1;
+    if (a.location)
+      locations[a.location] = (locations[a.location] || 0) + 1;
+  });
+
+  return `
+Total alerts: ${total}.
+Animals detected: ${JSON.stringify(animals)}.
+Locations: ${JSON.stringify(locations)}.
+`;
+}
+
+/* ===============================
+   CHAT API (OPENROUTER – META FREE)
+================================ */
 app.post("/api/chat", async (req, res) => {
+  const { message } = req.body;
+  if (!message) {
+    return res.status(400).json({ error: "Message is required" });
+  }
+
   try {
-    const { message, language } = req.body;
+    const summary = await getAnimalSummary();
 
-    if (!message) {
-      return res.json({ reply: "Please ask a question." });
-    }
-
-    // ===== Fetch alerts =====
-    const alerts = await dbMongo
-      .collection("animal_alerts")
-      .find()
-      .sort({ timestamp: -1 })
-      .toArray();
-
-    const total = alerts.length;
-
-    let lastTime = null;
-    const animalCount = {};
-    const locationCount = {};
-
-    alerts.forEach(a => {
-      const animal = a.animal || "Unknown";
-      animalCount[animal] = (animalCount[animal] || 0) + 1;
-
-      if (a.location) {
-        locationCount[a.location] = (locationCount[a.location] || 0) + 1;
-      }
-
-      if (!lastTime || a.timestamp > lastTime) lastTime = a.timestamp;
-    });
-
-    const mostAnimal =
-      Object.entries(animalCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "Unknown";
-
-    const mostLocation =
-      Object.entries(locationCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "Not specified";
-
-    const lastAlert =
-      lastTime ? `${Math.floor((Date.now() - new Date(lastTime)) / 60000)} minutes ago` : "No alerts";
-
-    // ===== SYSTEM PROMPT =====
     const systemPrompt = `
-You are an AI assistant for an animal intrusion monitoring system.
+You are an AI assistant for an animal intrusion detection app.
 
-Tasks:
-1. Detect the user's input language automatically.
-2. Fix spelling and grammar internally.
-3. Understand weak or broken questions.
-4. Answer ONLY what is asked.
-5. Do NOT repeat previous answers.
-6. Keep replies short and factual.
-7. Translate the FINAL answer to this language: ${language}
-
-System data:
-- Total alerts: ${total}
-- Most detected animal: ${mostAnimal}
-- Most common location: ${mostLocation}
-- Last alert time: ${lastAlert}
+INSTRUCTIONS:
+- Automatically detect the user's language and reply in the SAME language.
+- Fix grammar silently.
+- Answer only what the user asks.
+- Keep responses short and clear.
+- If data is missing, say "Not available".
+- Use ONLY this data when answering:
+${summary}
 `;
 
     const response = await axios.post(
@@ -237,31 +258,37 @@ System data:
         model: "meta-llama/llama-3.1-8b-instruct:free",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: message }
+          { role: "user", content: message },
         ],
-        temperature: 0.6,
-        max_tokens: 180
+        temperature: 0.3,
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
-        }
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
       }
     );
 
-    const reply = response.data.choices[0].message.content.trim();
-    res.json({ reply });
+    const reply =
+      response.data?.choices?.[0]?.message?.content ||
+      "No response available";
 
+    res.json({ reply });
   } catch (err) {
-    console.error("❌ AI ERROR:", err.response?.data || err.message);
-    res.json({
-      reply: "AI service temporarily unavailable. Please try again."
-    });
+    console.error(
+      "❌ OpenRouter error:",
+      err.response?.data || err.message
+    );
+    res
+      .status(500)
+      .json({ reply: "AI service temporarily unavailable. Please try again." });
   }
 });
 
-// ===============================
-// START SERVER
-// ===============================
-app.listen(PORT, () => console.log(`Server running on port ${PORT} ✅`));
+/* ===============================
+   START SERVER
+================================ */
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
