@@ -170,57 +170,71 @@ app.get("/alert/:id", async (req, res) => {
 // ===============================
 // CHAT ENDPOINT WITH OPENROUTER
 // ===============================
-app.post("/api/chat", async (req, res) => {
-  try {
-    const { message, language } = req.body;
-    if (!message || !language) return res.status(400).json({ error: "Provide message and language" });
+app.post('/api/chat', async (req, res) => {
+  const { message, language } = req.body;
 
-    // Fetch recent alerts for summary
+  if (!message || !language) {
+    return res.status(400).json({ error: "Message and language are required" });
+  }
+
+  try {
+    // 1. Fetch all alerts from DB
     const alerts = await dbMongo.collection("animal_alerts")
       .find()
       .sort({ timestamp: -1 })
-      .limit(20)
       .toArray();
 
-    let summary = "No recent animal alerts.";
-    if (alerts.length > 0) {
-      const counts = {};
-      alerts.forEach(a => (counts[a.animal] = (counts[a.animal] || 0) + 1));
-      const mostFrequent = Object.entries(counts).reduce((a,b)=>a[1]>b[1]?a:b)[0];
-      summary = `Total alerts: ${alerts.length}. Most frequent: ${mostFrequent}.`;
-    }
+    const totalAlerts = alerts.length;
+    const animalCounts = {};
+    const locationCounts = {};
+    let lastTimestamp = null;
 
-    // OpenRouter prompt
-    const prompt = `
-You are an AI assistant for a forest patrol app.
-Reply ONLY in ${language}.
-User question: ${message}
-Data summary: ${summary}
-Keep answers short, simple, and relevant.
-Do NOT give generic safety tips automatically. Respond to the user question based on alerts.
+    alerts.forEach(alert => {
+      const label = alert.animal || "Unknown";
+      animalCounts[label] = (animalCounts[label] || 0) + 1;
+      if (alert.location) locationCounts[alert.location] = (locationCounts[alert.location] || 0) + 1;
+      if (!lastTimestamp || alert.timestamp > lastTimestamp) lastTimestamp = alert.timestamp;
+    });
+
+    const mostFrequentAnimal = Object.entries(animalCounts).reduce((a, b) => a[1] > b[1] ? a : b, ["Unknown", 0])[0];
+    const mostFrequentLocation = Object.entries(locationCounts).reduce((a, b) => a[1] > b[1] ? a : b, ["Not specified", 0])[0];
+    const lastAlert = lastTimestamp ? `Last alert: ${Math.floor((Date.now() - new Date(lastTimestamp))/60000)} minutes ago.` : "No alerts yet.";
+
+    // 2. Prepare strong system prompt
+    const systemPrompt = `
+You are an AI assistant for the Animal Patrol app.
+User queries might be vague or have grammatical errors.
+Auto-correct the user input internally.
+Reply in ${language} only.
+Provide accurate, concise answers based on this data:
+- Total alerts: ${totalAlerts}
+- Most frequent animal: ${mostFrequentAnimal}
+- Most frequent location: ${mostFrequentLocation}
+- Last alert: ${lastAlert}
+- Locations of alerts: ${Object.keys(locationCounts).join(", ") || "Not specified"}
+Focus on user question, provide direct answers, do not repeat generic tips.
 `;
 
-    const response = await axios.post(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        model: "openrouter/auto",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 300
-      },
-      {
-        headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-        timeout: 60000
-      }
-    );
+    // 3. Ask the AI
+    const completion = await openai.chat.completions.create({
+      model: "meta-instruct-0b", // fast free tier
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message }
+      ],
+      temperature: 0.3, // low temp for accurate answers
+      max_tokens: 300,
+    });
 
-    const reply = response.data.choices?.[0]?.message?.content || "AI response unavailable";
+    const reply = completion.choices[0].message.content;
+
     res.json({ reply });
-
   } catch (err) {
-    console.error("❌ Chat error:", err.response?.data || err.message);
-    res.json({ reply: "AI temporarily unavailable. Try again later." });
+    console.error("❌ Error in /api/chat:", err);
+    res.status(500).json({ error: "AI response failed" });
   }
 });
+
 
 // ===============================
 // START SERVER
