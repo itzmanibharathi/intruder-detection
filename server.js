@@ -6,9 +6,6 @@ import axios from "axios";
 
 dotenv.config();
 
-// ===============================
-// CONFIG
-// ===============================
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -19,7 +16,7 @@ if (!MONGO_URI || !OPENROUTER_API_KEY) {
 }
 
 // ===============================
-// MONGODB INIT
+// MongoDB Init
 // ===============================
 const mongoClient = new MongoClient(MONGO_URI);
 let dbMongo;
@@ -35,19 +32,19 @@ mongoClient.connect()
   });
 
 // ===============================
-// EXPRESS INIT
+// Express Init
 // ===============================
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // ===============================
-// HEALTH CHECK
+// Health Check
 // ===============================
 app.get("/", (req, res) => res.json({ status: "Backend running ✅" }));
 
 // ===============================
-// SAVE ALERT
+// Save Alert
 // ===============================
 app.post("/alert", async (req, res) => {
   try {
@@ -74,7 +71,7 @@ app.post("/alert", async (req, res) => {
 });
 
 // ===============================
-// FETCH ALERTS
+// Fetch Recent Alerts
 // ===============================
 app.get("/alerts", async (req, res) => {
   try {
@@ -91,7 +88,73 @@ app.get("/alerts", async (req, res) => {
 });
 
 // ===============================
-// SUMMARY FUNCTION
+// Analytics
+// ===============================
+app.get("/analytics/today", async (req, res) => {
+  try {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+
+    const count = await dbMongo.collection("animal_alerts").countDocuments({ timestamp: { $gte: start } });
+    res.json({ count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/analytics/last7days", async (req, res) => {
+  try {
+    const start = new Date();
+    start.setDate(start.getDate() - 7);
+
+    const alerts = await dbMongo.collection("animal_alerts").find({ timestamp: { $gte: start } }).toArray();
+    const result = {};
+    alerts.forEach(alert => {
+      result[alert.animal] = (result[alert.animal] || 0) + 1;
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/analytics/range", async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) return res.status(400).json({ error: "Provide startDate and endDate" });
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const count = await dbMongo.collection("animal_alerts").countDocuments({ timestamp: { $gte: start, $lte: end } });
+    res.json({ count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===============================
+// Fetch Single Alert
+// ===============================
+app.get("/alert/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const alert = await dbMongo.collection("animal_alerts").findOne({ _id: new ObjectId(id) });
+
+    if (!alert) return res.status(404).json({ error: "Alert not found" });
+    res.json(alert);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===============================
+// Summary function
 // ===============================
 async function getAnimalSummary() {
   const alerts = await dbMongo.collection("animal_alerts").find().toArray();
@@ -105,7 +168,7 @@ async function getAnimalSummary() {
 }
 
 // ===============================
-// CHAT USING OPENROUTER
+// Chat with OpenRouter
 // ===============================
 app.post("/api/chat", async (req, res) => {
   try {
@@ -122,7 +185,7 @@ Give forest safety and animal intrusion prevention tips.
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
-        model: "mpt-7b-chat", // free model from OpenRouter
+        model: "mpt-7b-chat",
         messages: [{ role: "user", content: prompt }]
       },
       {
@@ -139,7 +202,7 @@ Give forest safety and animal intrusion prevention tips.
 
   } catch (err) {
     console.error("❌ OpenRouter error:", err.response?.data || err.message);
-    // fallback for free usage / demo
+    // Fallback for free/demo
     res.json({
       reply: "AI temporarily unavailable. Ensure fencing, lights, and regular patrols."
     });
@@ -147,8 +210,6 @@ Give forest safety and animal intrusion prevention tips.
 });
 
 // ===============================
-// START SERVER
+// Start Server
 // ===============================
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
